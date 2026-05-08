@@ -1,62 +1,68 @@
-"""Compare parsed .env file dictionaries and report differences."""
+"""Compare two parsed .env dicts and return structured differences."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Tuple
 
 
 @dataclass
 class DiffResult:
-    """Holds the result of comparing two .env files."""
+    """Holds the result of comparing two env files."""
 
-    left_name: str
-    right_name: str
+    left_name: str = "left"
+    right_name: str = "right"
     missing_in_right: List[str] = field(default_factory=list)
     missing_in_left: List[str] = field(default_factory=list)
-    mismatched: Dict[str, tuple] = field(default_factory=dict)
+    mismatched_values: Dict[str, Tuple[str, str]] = field(default_factory=dict)
+    # internal: total unique keys seen across both sides
+    _total_keys: int = field(default=0, repr=False, compare=False)
 
-    @property
     def has_differences(self) -> bool:
-        return bool(self.missing_in_right or self.missing_in_left or self.mismatched)
+        return bool(
+            self.missing_in_right or self.missing_in_left or self.mismatched_values
+        )
 
     def summary(self) -> str:
-        lines = [f"Comparing '{self.left_name}' vs '{self.right_name}':"]
-
-        if not self.has_differences:
-            lines.append("  No differences found.")
-            return "\n".join(lines)
-
-        for key in sorted(self.missing_in_right):
-            lines.append(f"  - {key!r} only in '{self.left_name}'")
-
-        for key in sorted(self.missing_in_left):
-            lines.append(f"  + {key!r} only in '{self.right_name}'")
-
-        for key in sorted(self.mismatched):
-            left_val, right_val = self.mismatched[key]
-            lines.append(
-                f"  ~ {key!r}: '{self.left_name}'={left_val!r} | '{self.right_name}'={right_val!r}"
+        parts = []
+        if self.missing_in_right:
+            parts.append(
+                f"{len(self.missing_in_right)} key(s) missing in {self.right_name}"
             )
-
-        return "\n".join(lines)
+        if self.missing_in_left:
+            parts.append(
+                f"{len(self.missing_in_left)} key(s) missing in {self.left_name}"
+            )
+        if self.mismatched_values:
+            parts.append(f"{len(self.mismatched_values)} value mismatch(es)")
+        return ", ".join(parts) if parts else "No differences found."
 
 
 def compare(
-    left: Dict[str, Optional[str]],
-    right: Dict[str, Optional[str]],
+    left: Dict[str, str],
+    right: Dict[str, str],
     left_name: str = "left",
     right_name: str = "right",
 ) -> DiffResult:
-    """Compare two env dictionaries and return a DiffResult."""
-    result = DiffResult(left_name=left_name, right_name=right_name)
+    """Compare two env dicts and return a DiffResult."""
+    left_keys = set(left)
+    right_keys = set(right)
+    all_keys = left_keys | right_keys
 
-    left_keys = set(left.keys())
-    right_keys = set(right.keys())
+    missing_in_right = sorted(left_keys - right_keys)
+    missing_in_left = sorted(right_keys - left_keys)
+    mismatched: Dict[str, Tuple[str, str]] = {}
 
-    result.missing_in_right = sorted(left_keys - right_keys)
-    result.missing_in_left = sorted(right_keys - left_keys)
-
-    for key in left_keys & right_keys:
+    for key in sorted(left_keys & right_keys):
         if left[key] != right[key]:
-            result.mismatched[key] = (left[key], right[key])
+            mismatched[key] = (left[key], right[key])
 
+    result = DiffResult(
+        left_name=left_name,
+        right_name=right_name,
+        missing_in_right=missing_in_right,
+        missing_in_left=missing_in_left,
+        mismatched_values=mismatched,
+    )
+    result._total_keys = len(all_keys)
     return result
