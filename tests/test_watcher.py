@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -17,10 +18,13 @@ def tmp(tmp_path: Path):
 
 
 def _write(path: Path, content: str) -> None:
+    """Write content to a file and bump mtime by 1 second.
+
+    This ensures mtime advances even on fast filesystems where two writes
+    within the same second would otherwise look identical.
+    """
     path.write_text(content)
-    # Ensure mtime advances even on fast filesystems.
     ts = path.stat().st_mtime + 1
-    import os
     os.utime(path, (ts, ts))
 
 
@@ -95,3 +99,20 @@ def test_watch_detects_new_key_added(tmp: Path) -> None:
     watch(str(left), str(right), lambda r: calls.append(r), interval=0, max_cycles=1)
     assert len(calls) == 1
     assert calls[0].missing_in_right == []
+
+
+def test_watch_detects_left_file_change(tmp: Path) -> None:
+    """Callback should fire when the *left* file changes, not just the right."""
+    left = tmp / "left.env"
+    right = tmp / "right.env"
+    left.write_text("A=1\n")
+    right.write_text("A=1\n")
+
+    calls: list[DiffResult] = []
+    watch(str(left), str(right), lambda r: calls.append(r), interval=0, max_cycles=1)
+    assert calls == []
+
+    _write(left, "A=99\n")
+    watch(str(left), str(right), lambda r: calls.append(r), interval=0, max_cycles=1)
+    assert len(calls) == 1
+    assert "A" in calls[0].mismatched_values
